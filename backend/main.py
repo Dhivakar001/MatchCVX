@@ -18,14 +18,12 @@ OPENROUTER_API_KEY = os.environ.get(
 )
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Model fallback chain — SPEED-OPTIMIZED ordering
 # Fast small models first, large models as fallback
 OPENROUTER_MODELS = [
-    "google/gemma-4-26b-a4b-it:free",              # 26B, fast
-    "nvidia/nemotron-3-nano-30b-a3b:free",          # 30B nano, fast
+    "openai/gpt-oss-20b:free",                      # Highly reliable and fast
+    "google/gemma-4-26b-a4b-it:free",              # 26B, fast, tested working
     "deepseek/deepseek-v4-flash:free",              # Fast flash variant
     "meta-llama/llama-3.3-70b-instruct:free",       # 70B fallback
-    "nvidia/nemotron-3-super-120b-a12b:free",       # 120B last resort
 ]
 
 # Add the parent directory to the path so we can import core

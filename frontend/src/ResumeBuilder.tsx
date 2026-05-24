@@ -548,7 +548,12 @@ export default function ResumeBuilder({ result, originalPdf, jdText, onBack }: R
                       </div>
                       <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 1 }}>{newScore.score_label}</div>
                       <div style={{ marginTop: '0.6rem' }}>
-                        {[{ l: 'Skill', k: 'skill_score' as const }, { l: 'AI', k: 'sbert_score' as const }, { l: 'TF-IDF', k: 'tfidf_score' as const }].map(x => {
+                        {[
+                          { l: 'Skill', k: 'skill_score' as const }, 
+                          { l: 'Content', k: 'sbert_score' as const }, 
+                          { l: 'Keyword', k: 'tfidf_score' as const },
+                          { l: 'Format', k: 'formatting_score' as const }
+                        ].map(x => {
                           const ov = result.matching_scores[x.k], nv = newScore.matching_scores[x.k], d = nv - ov;
                           return <div key={x.k} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: 2 }}>
                             <span style={{ color: 'var(--text-muted)' }}>{x.l}</span>

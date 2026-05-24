@@ -9,6 +9,7 @@ from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
+from .text_preprocessor import extract_sections
 
 
 @dataclass
@@ -17,6 +18,7 @@ class MatchingScores:
     tfidf_score: float = 0.0
     sbert_score: float = 0.0
     skill_score: float = 0.0
+    formatting_score: float = 0.0
     combined_score: float = 0.0
     
     def to_dict(self) -> dict:
@@ -24,6 +26,7 @@ class MatchingScores:
             'tfidf_score': round(self.tfidf_score, 4),
             'sbert_score': round(self.sbert_score, 4),
             'skill_score': round(self.skill_score, 4),
+            'formatting_score': round(self.formatting_score, 4),
             'combined_score': round(self.combined_score, 4)
         }
 
@@ -36,9 +39,10 @@ class MatchingEngine:
     
     # Default score weights
     DEFAULT_WEIGHTS = {
-        'skill': 0.40,   # Skill match weight (most important for ATS)
-        'tfidf': 0.30,   # TF-IDF cosine similarity weight
-        'sbert': 0.30    # Sentence-BERT semantic similarity weight
+        'skill': 0.35,       # Skill match weight (most important for ATS)
+        'tfidf': 0.25,       # Keyword match weight
+        'sbert': 0.25,       # Semantic context weight
+        'formatting': 0.15   # Structure, sections, and length weight
     }
     
     def __init__(self, weights: Optional[Dict[str, float]] = None):
@@ -192,40 +196,62 @@ class MatchingEngine:
         
         return chunks
     
+    def compute_formatting_score(self, raw_resume_text: str) -> float:
+        """
+        Compute formatting and structure score.
+        Evaluates length and presence of core sections.
+        """
+        if not raw_resume_text.strip():
+            return 0.0
+            
+        score = 0.0
+        
+        # 1. Length evaluation (0 to 0.4)
+        word_count = len(raw_resume_text.split())
+        if 400 <= word_count <= 800:
+            score += 0.4  # Optimal length
+        elif 200 <= word_count <= 1200:
+            score += 0.3  # Acceptable length
+        elif 100 <= word_count <= 1500:
+            score += 0.1  # Poor length
+            
+        # 2. Section evaluation (0 to 0.6)
+        sections = extract_sections(raw_resume_text)
+        
+        # Core sections (weight: 0.2 each)
+        if 'experience' in sections or 'projects' in sections:
+            score += 0.2
+        if 'education' in sections or 'certifications' in sections:
+            score += 0.2
+        if 'skills' in sections:
+            score += 0.2
+            
+        return float(np.clip(score, 0.0, 1.0))
+
     def compute_combined_score(
         self,
-        resume_text: str,
-        jd_text: str,
+        raw_resume_text: str,
+        processed_resume: str,
+        processed_jd: str,
         skill_match_percentage: float
     ) -> MatchingScores:
         """
         Compute the final combined ATS match score.
-        
-        Combines three signals:
-        - Skill match score (from skill extractor)
-        - TF-IDF cosine similarity (keyword matching)
-        - Sentence-BERT semantic similarity (meaning matching)
-        
-        Args:
-            resume_text: Preprocessed resume text
-            jd_text: Preprocessed job description text
-            skill_match_percentage: Skill match percentage from SkillExtractor (0-100)
-        
-        Returns:
-            MatchingScores with all individual and combined scores
         """
         # Normalize skill score to 0-1 range
         skill_score = skill_match_percentage / 100.0
         
         # Compute individual scores
-        tfidf_score = self.compute_tfidf_score(resume_text, jd_text)
-        sbert_score = self.compute_sbert_score(resume_text, jd_text)
+        tfidf_score = self.compute_tfidf_score(processed_resume, processed_jd)
+        sbert_score = self.compute_sbert_score(processed_resume, processed_jd)
+        formatting_score = self.compute_formatting_score(raw_resume_text)
         
         # Weighted combination
         combined = (
-            self.weights['skill'] * skill_score +
-            self.weights['tfidf'] * tfidf_score +
-            self.weights['sbert'] * sbert_score
+            self.weights.get('skill', 0.35) * skill_score +
+            self.weights.get('tfidf', 0.25) * tfidf_score +
+            self.weights.get('sbert', 0.25) * sbert_score +
+            self.weights.get('formatting', 0.15) * formatting_score
         )
         
         # Clamp to valid range
@@ -235,5 +261,6 @@ class MatchingEngine:
             tfidf_score=tfidf_score,
             sbert_score=sbert_score,
             skill_score=skill_score,
+            formatting_score=formatting_score,
             combined_score=combined
         )

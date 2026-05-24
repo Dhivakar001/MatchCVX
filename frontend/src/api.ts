@@ -2,6 +2,14 @@ import axios from 'axios';
 
 const API_BASE_URL = 'http://localhost:8000/api';
 
+export interface MatchingScores {
+  tfidf_score: number;
+  sbert_score: number;
+  skill_score: number;
+  formatting_score: number;
+  combined_score: number;
+}
+
 export interface AnalysisResponse {
   ats_score: number;
   score_label: string;
@@ -9,12 +17,7 @@ export interface AnalysisResponse {
   resume_text: string;
   resume_word_count: number;
   jd_word_count: number;
-  matching_scores: {
-    tfidf_score: number;
-    sbert_score: number;
-    skill_score: number;
-    combined_score: number;
-  };
+  matching_scores: MatchingScores;
   skill_comparison: {
     match_percentage: number;
     category_scores: Record<string, number>;

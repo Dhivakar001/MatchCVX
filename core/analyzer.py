@@ -87,6 +87,7 @@ class Analyzer:
         
         # Step 3 & 4: Compute combined matching scores
         matching_scores = self.matching_engine.compute_combined_score(
+            resume_text,
             processed_resume,
             processed_jd,
             skill_comparison.match_percentage
