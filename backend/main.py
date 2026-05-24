@@ -1,0 +1,468 @@
+import os
+import sys
+import io
+import json
+import difflib
+import requests as http_requests
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from typing import Dict, List, Any
+
+# OpenRouter configuration
+OPENROUTER_API_KEY = os.environ.get(
+    "OPENROUTER_API_KEY",
+    "REPLACE_WITH_YOUR_OPENROUTER_API_KEY"
+)
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Model fallback chain — tested & verified free models
+# Priority order based on live API testing (May 2026):
+# 1. NVIDIA Nemotron 3 Super 120B: ✅ CONFIRMED WORKING, large 120B MoE
+# 2. DeepSeek V4 Flash: Best quality when available (often rate-limited)
+# 3. Google Gemma 4 31B: High quality (often rate-limited)
+# 4. Meta Llama 3.3 70B: Strong general model
+# 5. Nous Hermes 3 405B: Massive fallback
+OPENROUTER_MODELS = [
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "deepseek/deepseek-v4-flash:free",
+    "google/gemma-4-31b-it:free",
+    "meta-llama/llama-3.3-70b-instruct:free",
+    "nousresearch/hermes-3-llama-3.1-405b:free",
+]
+
+# Add the parent directory to the path so we can import core
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from core.analyzer import Analyzer
+from core.resume_parser import extract_text_from_pdf
+
+# Global analyzer instance
+analyzer = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic
+    global analyzer
+    print("Loading AI Models... This may take a moment on the first run.")
+    analyzer = Analyzer()
+    analyzer.preload()
+    print("Models loaded successfully!")
+    yield
+    # Shutdown logic
+    print("Shutting down...")
+
+app = FastAPI(
+    title="MatchCVX API",
+    description="Smart ATS Resume Analyzer API",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Enable CORS for the frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Adjust this in production
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+class AnalysisResponse(BaseModel):
+    ats_score: float
+    score_label: str
+    score_color: str
+    resume_text: str
+    resume_word_count: int
+    jd_word_count: int
+    matching_scores: Dict[str, float]
+    skill_comparison: Dict[str, Any]
+    suggestions: List[Dict[str, str]]
+
+@app.post("/api/analyze", response_model=AnalysisResponse)
+async def analyze_match(
+    resume: UploadFile = File(...),
+    jd_text: str = Form(...)
+):
+    """
+    Endpoint to analyze a resume against a job description.
+    """
+    if not resume.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+    
+    if not jd_text or not jd_text.strip():
+        raise HTTPException(status_code=400, detail="Job description is required.")
+        
+    try:
+        resume_text = extract_text_from_pdf(resume.file)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse PDF: {str(e)}")
+        
+    try:
+        result = analyzer.analyze(resume_text, jd_text)
+        skill_comp = result.skill_comparison
+        
+        return AnalysisResponse(
+            ats_score=result.ats_score,
+            score_label=result.score_label,
+            score_color=result.score_color,
+            resume_text=resume_text,
+            resume_word_count=result.resume_word_count,
+            jd_word_count=result.jd_word_count,
+            matching_scores=result.matching_scores.to_dict(),
+            skill_comparison={
+                "match_percentage": skill_comp.match_percentage,
+                "category_scores": skill_comp.category_scores,
+                "matched_skills": [{"name": s.name, "category": s.category} for s in skill_comp.matched_skills],
+                "missing_skills": [{"name": s.name, "category": s.category} for s in skill_comp.missing_skills],
+                "extra_skills": [{"name": s.name, "category": s.category} for s in skill_comp.extra_skills],
+            },
+            suggestions=result.suggestions
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+@app.post("/api/re-analyze", response_model=AnalysisResponse)
+async def re_analyze_text(
+    resume_text: str = Form(...),
+    jd_text: str = Form(...)
+):
+    """
+    Re-analyze modified resume text against the same job description.
+    Used by the Resume Builder to let users check their improved score
+    before confirming and downloading.
+    """
+    if not resume_text or not resume_text.strip():
+        raise HTTPException(status_code=400, detail="Resume text is required.")
+    if not jd_text or not jd_text.strip():
+        raise HTTPException(status_code=400, detail="Job description is required.")
+
+    try:
+        result = analyzer.analyze(resume_text.strip(), jd_text.strip())
+        skill_comp = result.skill_comparison
+
+        return AnalysisResponse(
+            ats_score=result.ats_score,
+            score_label=result.score_label,
+            score_color=result.score_color,
+            resume_text=resume_text.strip(),
+            resume_word_count=result.resume_word_count,
+            jd_word_count=result.jd_word_count,
+            matching_scores=result.matching_scores.to_dict(),
+            skill_comparison={
+                "match_percentage": skill_comp.match_percentage,
+                "category_scores": skill_comp.category_scores,
+                "matched_skills": [{"name": s.name, "category": s.category} for s in skill_comp.matched_skills],
+                "missing_skills": [{"name": s.name, "category": s.category} for s in skill_comp.missing_skills],
+                "extra_skills": [{"name": s.name, "category": s.category} for s in skill_comp.extra_skills],
+            },
+            suggestions=result.suggestions
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Re-analysis failed: {str(e)}")
+
+
+@app.post("/api/ai-suggestions")
+async def get_ai_suggestions(
+    resume_text: str = Form(...),
+    jd_text: str = Form(...),
+    ats_score: float = Form(0),
+    matched_skills: str = Form(""),
+    missing_skills: str = Form(""),
+):
+    """
+    Uses OpenRouter LLM to generate high-quality, specific resume
+    improvement suggestions with exact text rewrites.
+    """
+    if not OPENROUTER_API_KEY:
+        raise HTTPException(status_code=500, detail="OpenRouter API key is not configured.")
+
+    prompt = f"""You are an elite ATS resume optimization consultant with 15 years of experience.
+Analyze this resume against the job description and provide SPECIFIC, ACTIONABLE improvements.
+
+## RESUME
+{resume_text.strip()}
+
+## JOB DESCRIPTION
+{jd_text.strip()}
+
+## CURRENT ATS ANALYSIS
+- ATS Match Score: {ats_score}/100
+- Matched Skills: {matched_skills or 'None detected'}
+- Missing Skills: {missing_skills or 'None detected'}
+
+## YOUR TASK
+Provide 6-10 specific suggestions. For EACH suggestion, you MUST give the exact improved text.
+Focus on:
+1. REWRITE weak bullet points with stronger action verbs, quantified metrics, and JD-aligned keywords
+2. ADD new bullet points or content that highlights missing skills naturally
+3. OPTIMIZE keyword density by weaving JD terms into existing content
+4. RESTRUCTURE sections for better ATS parsing
+
+Return ONLY valid JSON (no markdown fences). Use this exact schema:
+{{
+  "suggestions": [
+    {{
+      "type": "rewrite",
+      "priority": "high",
+      "title": "Brief action title",
+      "description": "Why this improves ATS scoring",
+      "original_text": "The exact line from the resume to replace (empty string for add_content type)",
+      "improved_text": "The exact replacement or new text",
+      "section": "experience|skills|summary|education|projects"
+    }}
+  ]
+}}
+
+Valid types: "rewrite" (replace existing text), "add_content" (insert new text), "keyword" (weave in JD terms).
+Valid priorities: "high", "medium", "low".
+Ensure original_text matches the resume EXACTLY when type is "rewrite".
+For "add_content", set original_text to empty string.
+"""
+
+    last_error = None
+    for model_id in OPENROUTER_MODELS:
+      try:
+        print(f"[AI] Trying model: {model_id}")
+        response = http_requests.post(
+            OPENROUTER_BASE_URL,
+            headers={
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "http://localhost:5173",
+                "X-Title": "MatchCVX Resume Analyzer",
+            },
+            json={
+                "model": model_id,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "You are an expert ATS resume optimizer. Always respond with valid JSON only, no markdown code fences."
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ],
+                "temperature": 0.4,
+                "max_tokens": 4000,
+            },
+            timeout=60,
+        )
+
+        if response.status_code != 200:
+            try:
+                err_body = response.json()
+                last_error = err_body.get("error", {}).get("message", response.text)
+            except Exception:
+                last_error = response.text[:500]
+            print(f"[AI] Model {model_id} failed ({response.status_code}): {last_error}")
+            continue  # Try next model
+
+        data = response.json()
+        content = data["choices"][0]["message"]["content"].strip()
+
+        # Strip markdown code fences if the model wraps its response
+        if content.startswith("```"):
+            content = content.split("\n", 1)[-1]
+        if content.endswith("```"):
+            content = content.rsplit("```", 1)[0]
+        content = content.strip()
+
+        parsed = json.loads(content)
+        suggestions = parsed.get("suggestions", [])
+
+        # Validate and sanitize each suggestion
+        valid_types = {"rewrite", "add_content", "keyword"}
+        valid_priorities = {"high", "medium", "low"}
+        cleaned = []
+        for s in suggestions:
+            cleaned.append({
+                "type": s.get("type", "rewrite") if s.get("type") in valid_types else "rewrite",
+                "priority": s.get("priority", "medium") if s.get("priority") in valid_priorities else "medium",
+                "title": s.get("title", "Improvement")[:120],
+                "description": s.get("description", "")[:500],
+                "original_text": s.get("original_text", ""),
+                "improved_text": s.get("improved_text", ""),
+                "section": s.get("section", "general"),
+            })
+
+        return {"suggestions": cleaned, "model_used": model_id}
+
+      except json.JSONDecodeError:
+        last_error = f"Model {model_id} returned invalid JSON"
+        print(f"[AI] {last_error}")
+        continue  # Try next model
+      except http_requests.Timeout:
+        last_error = f"Model {model_id} timed out"
+        print(f"[AI] {last_error}")
+        continue  # Try next model
+      except HTTPException:
+        raise
+      except Exception as e:
+        last_error = str(e)
+        print(f"[AI] Model {model_id} error: {last_error}")
+        continue  # Try next model
+
+    # All models failed
+    raise HTTPException(status_code=502, detail=f"All AI models failed. Last error: {last_error}")
+
+
+@app.post("/api/download-pdf")
+async def download_modified_pdf(
+    resume: UploadFile = File(...),
+    original_text: str = Form(...),
+    modified_text: str = Form(...)
+):
+    """
+    Accepts the original PDF, the original extracted text, and the user's
+    modified text. Applies text-level changes to the PDF while preserving
+    layout, fonts, and design, then returns the modified PDF.
+    """
+    try:
+        import fitz  # PyMuPDF
+    except ImportError:
+        raise HTTPException(status_code=500, detail="PyMuPDF is not installed on the server.")
+
+    try:
+        pdf_bytes = await resume.read()
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to open PDF: {str(e)}")
+
+    try:
+        # -----------------------------------------------------------
+        # 1. Compute a line-level diff between original and modified
+        # -----------------------------------------------------------
+        orig_lines = original_text.splitlines()
+        mod_lines = modified_text.splitlines()
+
+        replacements: list[tuple[str, str]] = []
+        matcher = difflib.SequenceMatcher(None, orig_lines, mod_lines)
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            if tag == "replace":
+                # Map each changed original line to its replacement
+                old_block = orig_lines[i1:i2]
+                new_block = mod_lines[j1:j2]
+                # Pair them up; if counts differ, handle gracefully
+                for k in range(max(len(old_block), len(new_block))):
+                    old = old_block[k].strip() if k < len(old_block) else None
+                    new = new_block[k].strip() if k < len(new_block) else None
+                    if old and new and old != new:
+                        replacements.append((old, new))
+            elif tag == "insert":
+                # New lines that don't exist in the original PDF text.
+                # We'll append them at the bottom of the last page.
+                new_block = "\n".join(l.strip() for l in mod_lines[j1:j2] if l.strip())
+                if new_block:
+                    replacements.append(("__APPEND__", new_block))
+
+        # -----------------------------------------------------------
+        # 2. Apply replacements to the PDF
+        # -----------------------------------------------------------
+        for old_text, new_text in replacements:
+            if old_text == "__APPEND__":
+                # Append new content to the bottom of the last page
+                last_page = doc[-1]
+                rect = last_page.rect
+                # Find the lowest existing text block to position below it
+                blocks = last_page.get_text("dict")["blocks"]
+                max_y = 0
+                for block in blocks:
+                    if "lines" in block:
+                        for line in block["lines"]:
+                            for span in line["spans"]:
+                                max_y = max(max_y, span["bbox"][3])
+                insert_y = min(max_y + 18, rect.height - 36)
+                last_page.insert_text(
+                    fitz.Point(rect.x0 + 36, insert_y),
+                    new_text,
+                    fontsize=10,
+                    fontname="helv",
+                    color=(0.15, 0.15, 0.15),
+                )
+                continue
+
+            # For each page, search for the old text and replace it
+            for page in doc:
+                found_areas = page.search_for(old_text)
+                if not found_areas:
+                    continue
+
+                for area in found_areas:
+                    # Detect the font properties of existing text at this location
+                    fontsize = 10
+                    fontname = "helv"
+                    color = (0.15, 0.15, 0.15)
+
+                    # Try to extract font info from the text blocks at this area
+                    blocks = page.get_text("dict")["blocks"]
+                    for block in blocks:
+                        if "lines" not in block:
+                            continue
+                        for line in block["lines"]:
+                            for span in line["spans"]:
+                                span_rect = fitz.Rect(span["bbox"])
+                                if span_rect.intersects(area):
+                                    fontsize = span["size"]
+                                    # Use a standard font that PyMuPDF can embed
+                                    fontname = "helv"
+                                    rgb = span.get("color", 0)
+                                    if isinstance(rgb, int):
+                                        r = ((rgb >> 16) & 0xFF) / 255
+                                        g = ((rgb >> 8) & 0xFF) / 255
+                                        b = (rgb & 0xFF) / 255
+                                        color = (r, g, b)
+                                    break
+
+                    # Redact the old text (white it out)
+                    page.add_redact_annot(area, fill=(1, 1, 1))
+
+                page.apply_redactions()
+
+                # Now write the new text at the same positions
+                found_areas_new = page.search_for(old_text)
+                # Since we redacted, the old text is gone. Use the original area.
+                for area in found_areas:
+                    page.insert_text(
+                        fitz.Point(area.x0, area.y1 - 2),
+                        new_text,
+                        fontsize=fontsize,
+                        fontname=fontname,
+                        color=color,
+                    )
+                break  # Only replace on the first page found
+
+        # -----------------------------------------------------------
+        # 3. Return the modified PDF
+        # -----------------------------------------------------------
+        output = io.BytesIO()
+        doc.save(output)
+        doc.close()
+        output.seek(0)
+
+        return StreamingResponse(
+            output,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": "attachment; filename=resume_improved.pdf"
+            }
+        )
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"PDF modification failed: {str(e)}")
+
+
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint to verify backend and models are ready."""
+    return {"status": "ok", "models_loaded": analyzer is not None}
