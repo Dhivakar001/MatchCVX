@@ -18,19 +18,14 @@ OPENROUTER_API_KEY = os.environ.get(
 )
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Model fallback chain — tested & verified free models
-# Priority order based on live API testing (May 2026):
-# 1. NVIDIA Nemotron 3 Super 120B: ✅ CONFIRMED WORKING, large 120B MoE
-# 2. DeepSeek V4 Flash: Best quality when available (often rate-limited)
-# 3. Google Gemma 4 31B: High quality (often rate-limited)
-# 4. Meta Llama 3.3 70B: Strong general model
-# 5. Nous Hermes 3 405B: Massive fallback
+# Model fallback chain — SPEED-OPTIMIZED ordering
+# Fast small models first, large models as fallback
 OPENROUTER_MODELS = [
-    "nvidia/nemotron-3-super-120b-a12b:free",
-    "deepseek/deepseek-v4-flash:free",
-    "google/gemma-4-31b-it:free",
-    "meta-llama/llama-3.3-70b-instruct:free",
-    "nousresearch/hermes-3-llama-3.1-405b:free",
+    "google/gemma-4-26b-a4b-it:free",              # 26B, fast
+    "nvidia/nemotron-3-nano-30b-a3b:free",          # 30B nano, fast
+    "deepseek/deepseek-v4-flash:free",              # Fast flash variant
+    "meta-llama/llama-3.3-70b-instruct:free",       # 70B fallback
+    "nvidia/nemotron-3-super-120b-a12b:free",       # 120B last resort
 ]
 
 # Add the parent directory to the path so we can import core
@@ -184,48 +179,24 @@ async def get_ai_suggestions(
     if not OPENROUTER_API_KEY:
         raise HTTPException(status_code=500, detail="OpenRouter API key is not configured.")
 
-    prompt = f"""You are an elite ATS resume optimization consultant with 15 years of experience.
-Analyze this resume against the job description and provide SPECIFIC, ACTIONABLE improvements.
+    # Trim inputs to keep prompt fast
+    r_text = resume_text.strip()[:3000]
+    j_text = jd_text.strip()[:2000]
 
-## RESUME
-{resume_text.strip()}
+    prompt = f"""Optimize this resume for ATS. Return ONLY valid JSON.
 
-## JOB DESCRIPTION
-{jd_text.strip()}
+RESUME:
+{r_text}
 
-## CURRENT ATS ANALYSIS
-- ATS Match Score: {ats_score}/100
-- Matched Skills: {matched_skills or 'None detected'}
-- Missing Skills: {missing_skills or 'None detected'}
+JOB DESCRIPTION:
+{j_text}
 
-## YOUR TASK
-Provide 6-10 specific suggestions. For EACH suggestion, you MUST give the exact improved text.
-Focus on:
-1. REWRITE weak bullet points with stronger action verbs, quantified metrics, and JD-aligned keywords
-2. ADD new bullet points or content that highlights missing skills naturally
-3. OPTIMIZE keyword density by weaving JD terms into existing content
-4. RESTRUCTURE sections for better ATS parsing
+Score: {ats_score}/100 | Matched: {matched_skills or 'None'} | Missing: {missing_skills or 'None'}
 
-Return ONLY valid JSON (no markdown fences). Use this exact schema:
-{{
-  "suggestions": [
-    {{
-      "type": "rewrite",
-      "priority": "high",
-      "title": "Brief action title",
-      "description": "Why this improves ATS scoring",
-      "original_text": "The exact line from the resume to replace (empty string for add_content type)",
-      "improved_text": "The exact replacement or new text",
-      "section": "experience|skills|summary|education|projects"
-    }}
-  ]
-}}
+Give 5-7 suggestions as JSON. Each must have exact text. Schema:
+{{"suggestions":[{{"type":"rewrite|add_content|keyword","priority":"high|medium|low","title":"short title","description":"why it helps","original_text":"exact text to replace (empty for add_content)","improved_text":"new text","section":"experience|skills|summary|education|projects"}}]}}
 
-Valid types: "rewrite" (replace existing text), "add_content" (insert new text), "keyword" (weave in JD terms).
-Valid priorities: "high", "medium", "low".
-Ensure original_text matches the resume EXACTLY when type is "rewrite".
-For "add_content", set original_text to empty string.
-"""
+For rewrite: original_text must match resume exactly. For add_content: original_text is empty string. Use strong action verbs and metrics."""
 
     last_error = None
     for model_id in OPENROUTER_MODELS:
@@ -251,10 +222,10 @@ For "add_content", set original_text to empty string.
                         "content": prompt
                     }
                 ],
-                "temperature": 0.4,
-                "max_tokens": 4000,
+                "temperature": 0.3,
+                "max_tokens": 2500,
             },
-            timeout=60,
+            timeout=18,  # Fail fast to try next model quickly
         )
 
         if response.status_code != 200:

@@ -137,6 +137,7 @@ export default function ResumeBuilder({ result, originalPdf, jdText, onBack }: R
   const [aiLoading, setAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
   const [aiModelUsed, setAiModelUsed] = useState<string | null>(null);
+  const [aiElapsed, setAiElapsed] = useState(0);
   const [sugTab, setSugTab] = useState<'rules' | 'ai'>('rules');
 
   // Review workflow
@@ -203,6 +204,9 @@ export default function ResumeBuilder({ result, originalPdf, jdText, onBack }: R
   const handleFetchAi = useCallback(async () => {
     setAiLoading(true);
     setAiError(null);
+    setAiElapsed(0);
+    const t0 = Date.now();
+    const timer = setInterval(() => setAiElapsed(Math.floor((Date.now() - t0) / 1000)), 1000);
     try {
       const { suggestions: data, model_used } = await fetchAiSuggestions(
         resumeText, jdText, result.ats_score,
@@ -215,6 +219,7 @@ export default function ResumeBuilder({ result, originalPdf, jdText, onBack }: R
     } catch (err) {
       setAiError(err instanceof Error ? err.message : 'AI suggestions failed');
     } finally {
+      clearInterval(timer);
       setAiLoading(false);
     }
   }, [resumeText, jdText, result]);
@@ -420,6 +425,7 @@ export default function ResumeBuilder({ result, originalPdf, jdText, onBack }: R
                         <div style={{ textAlign: 'center', padding: '2rem 0' }}>
                           <Loader2 size={28} className="loader" style={{ color: 'var(--accent-primary)', marginBottom: '0.75rem' }} />
                           <p className="pulsing" style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>AI is analyzing your resume…</p>
+                          <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '0.4rem', opacity: 0.6 }}>{aiElapsed}s elapsed</p>
                         </div>
                       )}
 

@@ -151,7 +151,7 @@ export const fetchAiSuggestions = async (
     const response = await axios.post<AISuggestionsResponse>(
       `${API_BASE_URL}/ai-suggestions`,
       formData,
-      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 65000 }
+      { headers: { 'Content-Type': 'multipart/form-data' }, timeout: 120000 }
     );
     return response.data;
   } catch (error: unknown) {
