@@ -6,6 +6,8 @@
 ![React](https://img.shields.io/badge/Frontend-React%20%7C%20Vite-blue?style=flat-square)
 ![FastAPI](https://img.shields.io/badge/Backend-FastAPI-teal?style=flat-square)
 
+**[🌐 View Version 1 Live Demo](https://matchcvx.netlify.app/)**
+
 ---
 
 ## ✨ Features
