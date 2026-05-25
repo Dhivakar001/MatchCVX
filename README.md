@@ -78,4 +78,27 @@ Navigate to `http://localhost:5173`. Upload your PDF resume, paste your target J
 
 ---
 
+## 🌍 Deployment Guide (Production)
+
+To share MatchCVX with the world, you must deploy the Backend and Frontend separately.
+
+### 1. Deploy Backend (Render.com)
+The Python backend must be hosted on a persistent server to handle the machine learning models.
+1. Create a **Web Service** on [Render.com](https://render.com/).
+2. Connect your GitHub repository and set the Root Directory to `backend/`.
+3. Build Command: `pip install -r requirements.txt --no-cache-dir` *(Note: `--no-cache-dir` is critical to prevent Out-Of-Memory errors on the free tier).*
+4. Start Command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+5. Add `OPENROUTER_API_KEY` to the Environment Variables.
+6. Copy the public URL Render gives you (e.g., `https://your-backend.onrender.com`).
+
+### 2. Deploy Frontend (Netlify.com)
+1. Import your GitHub repository to [Netlify](https://www.netlify.com/).
+2. Set the Base Directory to `frontend/`.
+3. Build Command: `npm run build`
+4. Publish Directory: `frontend/dist`
+5. Add a new Environment Variable: `VITE_API_BASE_URL` and set it to your Render backend URL with `/api` appended (e.g., `https://your-backend.onrender.com/api`).
+6. Deploy the site!
+
+---
+
 **MatchCVX** — Built with ❤️ for job seekers to beat the bots.
