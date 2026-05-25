@@ -11,11 +11,11 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Dict, List, Any
 
-# OpenRouter configuration
-OPENROUTER_API_KEY = os.environ.get(
-    "OPENROUTER_API_KEY",
-    "REPLACE_WITH_YOUR_OPENROUTER_API_KEY"
-)
+from dotenv import load_dotenv
+load_dotenv()
+
+# Setup OpenRouter API
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Fast small models first, large models as fallback
