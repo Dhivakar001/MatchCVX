@@ -181,7 +181,7 @@ async def get_ai_suggestions(
     r_text = resume_text.strip()[:3000]
     j_text = jd_text.strip()[:2000]
 
-    prompt = f"""Optimize this resume for ATS. Return ONLY valid JSON.
+    prompt = f"""You are an elite ATS optimizer. Your goal is to push the ATS score above 90/100. Return ONLY valid JSON.
 
 RESUME:
 {r_text}
@@ -191,10 +191,14 @@ JOB DESCRIPTION:
 
 Score: {ats_score}/100 | Matched: {matched_skills or 'None'} | Missing: {missing_skills or 'None'}
 
-Give 5-7 suggestions as JSON. Each must have exact text. Schema:
+Give 7-10 high-impact suggestions as JSON. Each must have exact text. Schema:
 {{"suggestions":[{{"type":"rewrite|add_content|keyword","priority":"high|medium|low","title":"short title","description":"why it helps","original_text":"exact text to replace (empty for add_content)","improved_text":"new text","section":"experience|skills|summary|education|projects"}}]}}
 
-For rewrite: original_text must match resume exactly. For add_content: original_text is empty string. Use strong action verbs and metrics."""
+RULES TO HIT 90+ SCORE:
+1. deeply weave MISSING skills into rewritten bullet points.
+2. If sections like 'Experience', 'Education', or 'Skills' are missing, use add_content to create them.
+3. Use strong action verbs and match the exact terminology in the JD.
+4. For rewrite/keyword: original_text must match the resume EXACTLY. For add_content: original_text MUST be "". """
 
     last_error = None
     for model_id in OPENROUTER_MODELS:
